@@ -1,0 +1,21 @@
+{
+  "name": "AIチャットシステム",
+  "short_name": "AI Chat",
+  "start_url": "ai.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "description": "AIチャットシステムをデスクトップアプリのように使えます。",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

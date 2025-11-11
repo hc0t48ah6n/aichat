@@ -1,0 +1,3141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4f46e5">
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('service-worker.js')
+        .then(() => console.log('Service Worker registered!'))
+        .catch(err => console.error('Service Worker failed:', err));
+    });
+  }
+</script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIチャットシステム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <style>
+        /* === スマホ最適化（プレースホルダー非表示＋パネル整列） === */
+@media (max-width: 768px) {
+
+    /* プレースホルダーをスマホで非表示 */
+    .suggestion-text {
+        display: none !important;
+    }
+
+    /* チャット入力欄をよりスッキリ配置 */
+    .chat-input-area {
+        flex-direction: column;
+        padding: 0.75rem;
+        gap: 0.4rem;
+        background-color: #fff;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    .input-controls {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.5rem;
+        width: 100%;
+    }
+
+    .input-container {
+        flex-grow: 1;
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .chat-input {
+        width: 100%;
+        padding: 0.6rem 1rem;
+        font-size: 1rem;
+        border-radius: 0.75rem;
+    }
+
+    .send-button {
+        flex-shrink: 0;
+        padding: 0.6rem 0.9rem;
+        font-size: 0.9rem;
+        border-radius: 0.75rem;
+        line-height: 1;
+    }
+
+    /* === コントロールパネルを横一列に整列 === */
+    .control-panel {
+        display: flex;
+        flex-wrap: nowrap;
+        justify-content: center;
+        gap: 0.5rem;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        padding: 0.4rem 0.6rem;
+        border-radius: 1rem;
+        scrollbar-width: none; /* Firefox */
+    }
+
+    .control-panel::-webkit-scrollbar {
+        display: none; /* スクロールバーを非表示 */
+    }
+
+    .control-panel-button {
+        flex-shrink: 0;
+        padding: 0.4rem 0.75rem;
+        font-size: 0.9rem;
+        border-radius: 9999px;
+        white-space: nowrap;
+    }
+
+    .control-panel-container {
+        gap: 0.3rem;
+    }
+
+    /* iPhone安全領域対応 */
+    @supports (padding: max(0px)) {
+        .chat-input-area {
+            padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+        }
+    }
+}
+        /* === スマホスクロールバー非表示 + パネル透明化 === */
+
+/* すべての環境でパネルの背景を透明にする */
+.control-panel {
+    background-color: rgba(255, 255, 255, 0.6) !important; /* 半透明で奥が見える */
+    backdrop-filter: blur(8px); /* 背景ぼかし（近代的で自然） */
+    -webkit-backdrop-filter: blur(8px); /* iOS Safari対応 */
+    border: 1px solid rgba(229, 231, 235, 0.4);
+    box-shadow: none;
+}
+
+/* ボタン部分だけ軽く浮かせる効果 */
+.control-panel-button {
+    background-color: rgba(255, 255, 255, 0.6);
+    border: 1px solid rgba(209, 213, 219, 0.3);
+    backdrop-filter: blur(6px);
+    border-radius: 9999px;
+    transition: background-color 0.2s ease, transform 0.2s ease;
+}
+.control-panel-button:hover {
+    background-color: rgba(255, 255, 255, 0.9);
+    transform: translateY(-1px);
+}
+
+/* === スマホ専用: スクロールバーを完全非表示 === */
+@media (max-width: 768px) {
+    ::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+
+    html, body {
+        -ms-overflow-style: none;  /* IE/Edge対応 */
+        scrollbar-width: none;     /* Firefox対応 */
+        overflow: -moz-scrollbars-none;
+    }
+
+    .chat-messages, 
+    .home-grid, 
+    .control-panel {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    .chat-messages::-webkit-scrollbar,
+    .home-grid::-webkit-scrollbar,
+    .control-panel::-webkit-scrollbar {
+        display: none !important;
+    }
+}
+
+</style><style>
+        :root {
+            /* === テーマカラーのカスタムプロパティ === */
+            --primary-color: #4f46e5;       /* メインの強調色 (青) */
+            --primary-hover-color: #4338ca; /* メインカラーのホバー */
+            --primary-light-color: #e0e7ff; /* ユーザーメッセージの背景 */
+            --primary-text-color: #312e81;  /* ユーザーメッセージのテキスト */
+            --secondary-color: #06b6d4;     /* プログレスバーなどの色 (水色) */
+            --neon-color: rgba(0, 255, 255, 0.5); /* スクロールバーのネオン色 */
+            /* ================================== */
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5; /* 背景色 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        
+        /* カスタムスクロールバーのスタイル */
+        ::-webkit-scrollbar {
+            width: 12px; /* スクロールバーの幅 */
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(5px);
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: var(--neon-color); /* カスタム変数を使用 */
+            border-radius: 10px;
+            border: 3px solid transparent;
+            background-clip: padding-box;
+            /* スクロールバーの背景はカスタム変数に合わせて変更が必要な場合は調整 */
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='100%25'%3E%3Cdefs%3E%3Cfilter id='blur'%3E%3CfeGaussianBlur stdDeviation='1.5' /%3E%3C/filter%3E%3C/defs%3E%3Cstyle%3E.kanji%7Bfont-family:sans-serif;font-size:30px;font-weight:bold;fill:cyan;filter:url(%23blur);%7D%3C/style%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' class='kanji'%3E青%3C/text%3E%3C/svg%3E");
+            background-size: contain;
+            background-repeat: no-repeat;
+            background-position: center;
+        }
+
+        .splash-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            opacity: 1;
+            transition: opacity 0.5s ease-in-out;
+        }
+        .splash-screen.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .chat-container {
+            background-color: #ffffff;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: absolute;
+            top: 0;
+            left: 0;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.4s ease-in-out, transform 0.4s ease-in-out;
+        }
+        .chat-container.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .chat-messages {
+            flex-grow: 1;
+            padding: 1rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+        .message-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .message {
+            max-width: 80%;
+            padding: 0.75rem 1rem;
+            border-radius: 1rem;
+            word-wrap: break-word;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+        .message.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .message.user {
+            background-color: var(--primary-light-color); /* カスタム変数を使用 */
+            align-self: flex-end;
+            color: var(--primary-text-color); /* カスタム変数を使用 */
+        }
+        .message.ai {
+            background-color: #f3f4f6;
+            align-self: flex-start;
+            color: #1f2937;
+        }
+        .chat-input-area {
+            display: flex;
+            padding: 1rem;
+            border-top: 1px solid #e5e7eb;
+            background-color: #ffffff;
+            position: relative;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        .input-controls {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.75rem;
+        }
+        .input-container {
+            flex-grow: 1;
+            position: relative;
+        }
+        .chat-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid #d1d5db;
+            border-radius: 0.75rem;
+            outline: none;
+            font-size: 1rem;
+            background-color: transparent;
+            z-index: 2;
+            position: relative;
+            transition: all 0.3s ease;
+            -webkit-appearance: none; /* iOSで背景が黒くなるのを防ぐ */
+        }
+        .chat-input:focus {
+            border-color: var(--primary-color); /* カスタム変数を使用 */
+            box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.2);
+        }
+        .thinking-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: 500;
+            transition: opacity 0.2s ease-in-out;
+            pointer-events: none;
+            z-index: 5; /* テキストがプログレスバーの上に表示されるように調整 */
+            white-space: nowrap;
+        }
+
+        .suggestion-text {
+            position: absolute;
+            top: 0;
+            left: 0;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            color: #a0a0a0;
+            user-select: none;
+            z-index: 1;
+            pointer-events: none;
+            border: 1px solid transparent;
+            border-radius: 0.75rem;
+            white-space: pre; /* 予測入力のためにpreを指定 */
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: pre-wrap; /* 改行を保持 */
+            word-break: break-all;
+        }
+        .send-button {
+            background-color: var(--primary-color); /* カスタム変数を使用 */
+            color: #ffffff;
+            padding: 0.75rem 1.25rem;
+            border: none;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 500;
+            transition: background-color 0.2s ease-in-out, transform 0.1s ease-in-out;
+            position: relative;
+            overflow: hidden;
+        }
+        .send-button:hover {
+            background-color: var(--primary-hover-color); /* カスタム変数を使用 */
+        }
+        .send-button:active {
+            transform: scale(0.98);
+        }
+        .send-button:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 20px;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 400px;
+            text-align: center;
+            position: relative;
+        }
+        .close-button {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close-button:hover,
+        .close-button:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .ripple-effect {
+            background-color: rgba(255, 255, 255, 0.7);
+            position: absolute;
+            border-radius: 50%;
+            transform: scale(0);
+            opacity: 1;
+            animation: ripple-animation 0.6s ease-out forwards;
+            pointer-events: none;
+        }
+        @keyframes ripple-animation {
+            to {
+                transform: scale(2.5);
+                opacity: 0;
+            }
+        }
+        /* スピナーのスタイル */
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary-color); /* カスタム変数を使用 */
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* プログレスバーのスタイル */
+        .input-container .progress-bar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            background-color: var(--secondary-color); /* カスタム変数を使用 */
+            border-radius: 0.75rem;
+            transition: width 0.3s ease-in-out;
+            z-index: 4;
+        }
+        /* パーセンテージ表示用のスタイル */
+        .percentage-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-weight: 500;
+            color: #ffffff;
+            /* 黒い縁取りを作成 */
+            text-shadow: -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+            z-index: 5;
+            white-space: nowrap;
+        }
+        .image-upload-button {
+            background-color: #e5e7eb;
+            color: #4b5563;
+            padding: 0.75rem;
+            border-radius: 0.75rem;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 44px;
+            height: 44px;
+        }
+        .image-upload-button:hover {
+            background-color: #d1d5db;
+        }
+        .image-preview-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem;
+            border-radius: 0.75rem;
+            background-color: var(--primary-light-color); /* カスタム変数を使用 */
+        }
+        .image-preview-container img {
+            width: 60px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 0.5rem;
+        }
+        .remove-image-button {
+            color: var(--primary-color); /* カスタム変数を使用 */
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: color 0.2s ease;
+        }
+        .remove-image-button:hover {
+            color: var(--primary-hover-color); /* カスタム変数を使用 */
+        }
+        
+        .translate-button {
+            position: absolute;
+            bottom: -20px;
+            right: 0;
+            background-color: var(--primary-color); /* カスタム変数を使用 */
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.2s ease;
+        }
+        .translate-button:hover {
+            background-color: var(--primary-hover-color); /* カスタム変数を使用 */
+        }
+        .material-icons {
+            font-size: 24px;
+            line-height: 1;
+        }
+
+        /* 縦スクロールアニメーション用のスタイル */
+        .disclaimer-container {
+            text-align: center;
+            font-size: 0.875rem;
+            color: #6b7280;
+            padding: 0.5rem 1rem;
+            height: 2rem; /* 固定の高さ */
+            position: relative;
+            overflow: hidden;
+            user-select: none;
+            line-height: 2rem; /* テキストを垂直方向に中央揃え */
+        }
+
+        .disclaimer-wrapper {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            transition: transform 1s ease-in-out;
+            transform: translateY(0);
+        }
+
+        .disclaimer-text {
+            width: 100%;
+            height: 2rem;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* 新機能用のボタン */
+        .chat-header-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .header-button {
+            background-color: #e5e7eb;
+            color: #4b5563;
+            padding: 0.5rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+        }
+        .header-button:hover {
+            background-color: #d1d5db;
+        }
+        /* AIメッセージに表示する機能ボタン */
+        .ai-message-actions {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+        .ai-message-button {
+            background-color: transparent;
+            color: #4b5563;
+            border: 1px solid #d1d5db;
+            padding: 0.25rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: background-color 0.2s ease, color 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+        .ai-message-button:hover {
+            background-color: #e5e7eb;
+            color: #333;
+        }
+        
+        .confirmation-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+            justify-content: center;
+            align-items: center;
+        }
+        .confirmation-content {
+            background-color: #fefefe;
+            margin: auto;
+            padding: 20px;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 80%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .confirmation-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+        .delete-button {
+            color: #ef4444;
+            transition: transform 0.1s ease-in-out;
+        }
+        .delete-button:hover {
+            color: #b91c1c;
+            transform: scale(1.1);
+        }
+
+        /* スピナーと背景のコンテナ */
+        .loading-spinner-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .loading-spinner-container.show {
+            display: flex;
+        }
+        .spinner-background {
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            background-color: rgba(255, 255, 255, 0.3);
+            backdrop-filter: blur(8px);
+            border-radius: 12px;
+            z-index: 999;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.1);
+        }
+        .loading-spinner {
+            z-index: 1000;
+        }
+        .loading-spinner svg {
+            width: 120px;
+            height: 120px;
+        }
+        .loading-spinner circle {
+            fill: none;
+            stroke: blue;
+            stroke-width: 20;
+            stroke-linecap: round;
+            animation: wax-and-wane 2s cubic-bezier(.5, 0, .5, 1) infinite, rotate 1.5s linear infinite;
+        }
+        @keyframes wax-and-wane {
+            0% {
+                stroke-dasharray: 236 78;
+                stroke-dashoffset: -37;
+            }
+            50% {
+                stroke-dasharray: 20 294;
+                stroke-dashoffset: -304;
+            }
+            100% {
+                stroke-dasharray: 236 78;
+                stroke-dashoffset: -351;
+            }
+        }
+        @keyframes rotate {
+            0% {
+                transform: rotate(0);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* 横画面用のホーム画面スタイル */
+        .home-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+        .conversation-card {
+            background-color: #f8fafc;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .conversation-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+        }
+        /* 新しいコントロールパネルのスタイル */
+        .control-panel-container {
+            display: flex;
+            justify-content: center;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .control-panel-toggle {
+            background-color: #e5e7eb;
+            color: #4b5563;
+            padding: 0.5rem;
+            border-radius: 9999px;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 36px;
+            height: 36px;
+        }
+        .control-panel-toggle:hover {
+            background-color: #d1d5db;
+            transform: translateY(-2px);
+        }
+        .control-panel {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+            padding: 0.25rem 1rem;
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 9999px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            width: fit-content;
+            margin-left: auto;
+            margin-right: auto;
+            max-height: 100px; /* アニメーション用 */
+            overflow: hidden;
+            transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+        }
+        .control-panel.hidden {
+            max-height: 0;
+            opacity: 0;
+            pointer-events: none;
+        }
+        .control-panel-button {
+            background-color: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            transition: color 0.2s ease, transform 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-weight: 500;
+            color: #6b7280;
+        }
+        .control-panel-button:hover {
+            color: var(--primary-color); /* カスタム変数を使用 */
+            transform: translateY(-2px);
+        }
+        .control-panel-button.selected {
+            color: var(--primary-color); /* カスタム変数を使用 */
+        }
+
+        /* 画面下部に表示する通知用スタイル */
+        #notification-container {
+            position: fixed;
+            bottom: 2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .notification {
+            background-color: #333;
+            color: white;
+            padding: 0.75rem 1rem;
+            border-radius: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            opacity: 0;
+            transform: translateY(20px);
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+        .notification.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        .notification.hide {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        
+        /* テーマモーダルのボタン */
+        .theme-option-button {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.2s ease, border 0.2s ease;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .theme-option-button:hover {
+            transform: scale(1.1);
+        }
+        .theme-option-button.selected {
+            border: 3px solid black;
+            transform: scale(1.1);
+        }
+        /* トグルスイッチの基本スタイル */
+        .toggle-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 0.5rem 0;
+            cursor: pointer;
+        }
+        .toggle-button {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: background-color 0.2s ease;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .toggle-button:hover {
+            background-color: var(--primary-hover-color);
+        }
+
+        /* ★追加: 名前入力モーダルのスタイル */
+        .name-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000; /* 他のモーダルより高い z-index */
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.6);
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(5px);
+        }
+        .name-modal-content {
+            background-color: #fefefe;
+            padding: 30px;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+            width: 90%;
+            max-width: 450px;
+            text-align: center;
+            animation: fadeInScale 0.3s ease-out;
+        }
+        @keyframes fadeInScale {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .name-input {
+            width: 100%;
+            padding: 10px;
+            margin-top: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 0.5rem;
+            font-size: 1.1rem;
+        }
+        /* ★追加: バリデーションエラーメッセージ */
+        #name-validation-message {
+            color: #ef4444;
+            font-size: 0.875rem;
+            margin-top: -10px;
+            margin-bottom: 10px;
+            height: 20px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="splash-screen" class="splash-screen">
+        <img src="gemini.png" width="10%" height="10%">
+    </div>
+
+    <div id="nameInputModal" class="name-modal">
+        <div class="name-modal-content">
+            <h3 class="text-2xl font-bold mb-4 text-gray-800">ようこそ！あなたの名前を教えてください😊</h3>
+            <p class="text-gray-600 mb-4">一度入力すると次回からは表示されません。（本名を使用しない場合このシステムを使えなくなるおそれがあります）</p>
+            <input type="text" id="userNameInput" class="name-input" placeholder="例: 山田太郎（本名）" maxlength="20">
+            <div id="name-validation-message"></div>
+            <button id="saveNameButton" class="send-button w-full" disabled>
+                システムを開始する
+            </button>
+        </div>
+    </div>
+    <div id="home-screen" class="chat-container p-8 show">
+        <div class="flex justify-between items-center w-full max-w-5xl mx-auto mb-8">
+            <h1 class="text-4xl font-bold text-gray-800">会話履歴</h1>
+            <button id="settings-button" class="header-button" title="設定">
+                <i class="material-icons text-xl">settings</i>
+            </button>
+        </div>
+        <div id="home-conversation-list" class="w-full max-w-5xl mx-auto overflow-y-auto home-grid">
+            </div>
+        <div class="mt-8 flex flex-col items-center w-full max-w-sm mx-auto">
+            <p>探している会話がありませんか？</p><a id="show-more-button"　style="background-color: skyblue;">もっと見る</a>
+            <button id="new-chat-button" class="send-button w-full rounded-lg">新しい会話を始める</button>
+        </div>
+    </div>
+<style>
+    a {
+        
+        color: blue;
+        cursor:pointer;
+}
+        </style>
+    <div id="all-conversations-screen" class="chat-container p-8 hidden">
+        <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+            <button id="back-to-home-button" class="text-gray-600 hover:text-gray-800">
+                <i class="material-icons">arrow_back_ios</i>
+            </button>
+            <h2 class="text-xl font-bold text-gray-800 flex-grow text-center">すべての会話</h2>
+            <div class="w-6"></div> </div>
+        <div id="all-conversation-list" class="w-full max-w-5xl mx-auto overflow-y-auto mt-4 home-grid">
+            </div>
+    </div>
+    
+    <div id="settings-screen" class="chat-container hidden">
+        <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+            <button id="back-to-home-from-settings-button" class="text-gray-600 hover:text-gray-800">
+                <i class="material-icons">arrow_back_ios</i>
+            </button>
+            <h2 class="text-xl font-bold text-gray-800 flex-grow text-center">設定</h2>
+            <div class="w-6"></div>
+        </div>
+        <div class="w-full max-w-2xl mx-auto p-4 overflow-y-auto">
+            <div class="bg-white rounded-lg shadow-md divide-y divide-gray-200">
+                
+                <button id="open-theme-settings-button" class="w-full text-left p-4 flex justify-between items-center hover:bg-gray-50 transition duration-150">
+                    <span class="text-lg font-medium text-gray-700 flex items-center gap-2">
+                        <i class="material-icons text-xl text-gray-500">palette</i> テーマカラー
+                    </span>
+                    <span class="text-gray-400">
+                        <i class="material-icons">chevron_right</i>
+                    </span>
+                </button>
+                
+                <div class="p-4 flex flex-col gap-2">
+                    <h4 class="text-sm font-semibold text-gray-500">チャット操作</h4>
+                    <div id="send-key-toggle-container" class="toggle-container hover:bg-gray-50 rounded-lg p-2 -m-2 transition duration-150">
+                        <span class="text-lg font-medium text-gray-700 flex items-center gap-2">
+                            <i class="material-icons text-xl text-gray-500">keyboard</i> メッセージ送信キー
+                        </span>
+                        <button id="send-key-toggle" class="toggle-button">
+                            <span>Enterキー</span> </button>
+                    </div>
+                </div>
+
+                <div class="p-4 flex flex-col gap-2">
+                    <h4 class="text-sm font-semibold text-gray-500">データ管理</h4>
+                    <button id="delete-all-history-button" class="w-full text-left p-4 flex justify-between items-center hover:bg-red-50 transition duration-150 rounded-lg -m-4">
+                        <span class="text-lg font-medium text-red-600 flex items-center gap-2">
+                            <i class="material-icons text-xl text-red-500">delete_forever</i> すべての会話履歴を削除
+                        </span>
+                        <span class="text-red-400">
+                            <i class="material-icons">chevron_right</i>
+                        </span>
+                    </button>
+                </div>
+                 <div class="p-4 flex flex-col gap-2">
+                    <h4 class="text-sm font-semibold text-gray-500">データ管理</h4>
+                    <button id="delete-all-history-button" class="w-full text-left p-4 flex justify-between items-center hover:bg-red-50 transition duration-150 rounded-lg -m-4">
+                        <span class="text-lg font-medium text-red-600 flex items-center gap-2">
+                            <a class="material-icons text-xl text-red-500" src="file:///media/fuse/drivefs-aa835bb4d6b45ac2057ae2d2495a3e67/root/qwertyuiop/ai.html?action=reset_name">delete_forever</a> 名前を再設定                 </span>
+                        <a src="file:///media/fuse/drivefs-aa835bb4d6b45ac2057ae2d2495a3e67/root/qwertyuiop/ai.html?action=reset_name">名前をリセット</a>
+                        <span class="text-red-400">
+                            <i class="material-icons">chevron_right</i>
+                        </span>
+                    </button>
+                </div>
+                
+                
+                <div class="p-4">
+                    <h4 class="text-sm font-semibold text-gray-500 mb-2">アプリ情報</h4>
+                    <div class="text-gray-700">バージョン: v2.5.0</div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+    <div id="chat-view" class="chat-container hidden">
+        <div class="p-4 border-b border-gray-200 flex items-center justify-between">
+            <button id="back-to-home-from-chat-button" class="text-gray-600 hover:text-gray-800">
+                <i class="material-icons">arrow_back_ios</i>
+            </button>
+            <h2 id="chat-title" class="text-xl font-bold text-gray-800 flex-grow text-center">新しい会話</h2>
+            <div class="chat-header-buttons">
+                <button id="summarize-button" class="header-button" title="会話を要約する">
+                    <i class="material-icons text-xl">summarize</i>
+                </button>
+                <button id="new-chat-from-chat-button" class="header-button" title="新しい会話を始める">
+                    <i class="material-icons text-xl">add</i>
+                </button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            </div>
+        <div class="disclaimer-container">
+            <div id="disclaimer-wrapper" class="disclaimer-wrapper">
+                <div class="disclaimer-text">geminiは間違った情報を提供することがあるので、重要な情報は必ず再確認してください</div>
+                <div class="disclaimer-text">Gemini can make mistakes, so double-check it</div>
+                <div class="disclaimer-text">Gemini는 부정확한 정보를 제공할 수 있으므로, 중요한 정보는 반드시 다시 확인하세요.</div>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <div class="control-panel-container">
+                <button id="toggle-control-panel-button" class="control-panel-toggle">
+                    <i class="material-icons">expand_less</i>
+                </button>
+                <div id="control-panel" class="control-panel">
+                    <button id="length-toggle-button" class="control-panel-button">
+                        <i class="material-icons">list_alt</i>
+                        <span id="length-label">短い</span>
+                    </button>
+                    <button id="tone-toggle-button" class="control-panel-button">
+                        <i class="material-icons">person_add_alt_1</i>
+                        <span id="tone-label">敬語</span>
+                    </button>
+                    <button id="language-toggle-button" class="control-panel-button">
+                        <i class="material-icons">translate</i>
+                        <span id="language-label">学習モード</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div id="image-preview-container" class="hidden image-preview-container">
+                <div class="flex items-center gap-2">
+                    <img id="image-preview" src="#" alt="アップロードされた画像">
+                    <span id="image-filename" class="text-sm text-gray-700 font-medium"></span>
+                </div>
+                <button id="remove-image-button" class="remove-image-button">
+                    <i class="material-icons">close</i>
+                </button>
+            </div>
+            <div class="input-controls">
+                <label for="image-input" class="image-upload-button">
+                    <i class="material-icons">photo_camera</i>
+                </label>
+                <input type="file" id="image-input" class="hidden" accept="image/png, image/jpeg, image/heic, image/webp">
+
+                <div class="input-container">
+                    <div id="progress-bar-in-input" class="progress-bar hidden"></div>
+                    <span id="thinking-text" class="percentage-text hidden">
+                        <span id="percentage-display"></span>
+                        <span id="thinking-display"></span>
+                    </span>
+                    <span id="suggestion-text" class="suggestion-text"></span>
+                    <input type="text" id="chat-input" class="chat-input">
+                </div>
+                <button id="send-button" class="send-button">送信</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="loading-spinner-container" class="loading-spinner-container">
+        <div class="spinner-background"></div>
+        <div class="loading-spinner">
+            <svg width="120" height="120" viewBox="-60 -60 120 120">
+                <circle r="50" />
+            </svg>
+        </div>
+    </div>
+    
+    <div id="notification-container"></div>
+
+    <div id="deleteConfirmationModal" class="confirmation-modal">
+        <div class="confirmation-content">
+            <p id="delete-confirmation-text">この会話を削除してもよろしいですか？</p>
+            <div class="confirmation-buttons">
+                <button id="confirmDeleteButton" class="send-button bg-red-500 hover:bg-red-700">削除</button>
+                <button id="cancelDeleteButton" class="send-button bg-gray-500 hover:bg-gray-700">キャンセル</button>
+            </div>
+        </div>
+    </div>
+    
+    <div id="themeModal" class="modal">
+        <div class="modal-content">
+            <span class="close-button" id="close-theme-modal">&times;</span>
+            <h3 class="text-xl font-bold mb-4">テーマカラーを選択</h3>
+            <div id="theme-options" class="flex justify-center gap-4">
+                </div>
+        </div>
+    </div>
+
+    <script>
+        // APIキーをここに設定してください。
+        const apiKey = "AIzaSyAecYBAI1E5AH2vs7L52esf9jQKVb-tnvE";
+
+        // ===================================
+        // ★★★ Firebaseの設定 (ユーザー指定) ★★★
+        // ===================================
+        const firebaseConfig = {
+ apiKey: "AIzaSyC69jHGvP9IzMp9UzygIxxavttbsg7iGGo",
+            authDomain: "mail-project-e762c.firebaseapp.com",
+            projectId: "mail-project-e762c",
+            storageBucket: "mail-project-e762c.firebasestorage.app",
+            messagingSenderId: "791285148666",
+            appId: "1:791285148666:web:725a3aa0cf6b9c66771243"
+        };
+
+        // Firebaseの初期化とFirestoreインスタンスの作成
+        let db;
+        try {
+            if (typeof firebase !== 'undefined') {
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                db = firebase.firestore();
+                console.log("Firebase initialized successfully.");
+            }
+        } catch (e) {
+            console.error("Firebaseの初期化に失敗しました:", e);
+        }
+        
+        const SPLASH_DURATION = 500;
+        const PROGRESS_INTERVAL = 50;
+        const DISCLAIMER_INTERVAL = 5000; // 5秒ごとに切り替えるように変更
+        
+        // 予測候補となる単語リスト
+        const SUGGESTIONS = [
+            "日本の首都はどこですか？",
+            "今日の天気は？",
+            "新しい趣味を見つけるには？",
+            "AIについて教えてください。",
+            "面白いジョークを言ってください。",
+            "簡単な料理のレシピを教えて。",
+            "AIの倫理的な問題について教えてください。",
+            "宇宙開発の最新トレンドは何ですか？",
+            "量子コンピューターについて説明してください。",
+            "Web開発のトレンドを教えてください。",
+            "健康的な食事のヒントを教えてください。"
+        ];
+
+        // 設定のオプションと初期値
+        const SETTINGS = {
+            length: {
+                options: ['short', 'normal', 'long'],
+                labels: ['短い', '普通', '長い'],
+                current: 'normal'
+            },
+            tone: {
+                options: ['polite', 'casual'],
+                labels: ['敬語', 'タメ語'],
+                current: 'polite'
+            },
+            language: {
+                options: ['ja', 'en', 'ko'],
+                labels: ['学習モード', '日本語', '한국어'],
+                current: 'ja'
+            },
+            sendKey: { // ★追加：メッセージ送信キー設定
+                options: ['Enter', 'Shift+Enter'],
+                labels: ['Enterキー', 'Shift+Enter'],
+                current: 'Enter'
+            }
+        };
+
+        // === テーマカスタマイズモーダル機能 ===
+// テーマカラーを選ぶ前に、「このシステムをあなた好みにカスタマイズ」という案内モーダルを表示する
+
+// モーダル要素を作成
+const modalOverlay = document.createElement('div');
+modalOverlay.id = 'theme-modal-overlay';
+modalOverlay.style.position = 'fixed';
+modalOverlay.style.top = '0';
+modalOverlay.style.left = '0';
+modalOverlay.style.width = '100%';
+modalOverlay.style.height = '100%';
+modalOverlay.style.backgroundColor = 'rgba(0,0,0,0.5)';
+modalOverlay.style.display = 'none';
+modalOverlay.style.alignItems = 'center';
+modalOverlay.style.justifyContent = 'center';
+modalOverlay.style.zIndex = '2000';
+
+const modalBox = document.createElement('div');
+modalBox.style.background = '#fff';
+modalBox.style.borderRadius = '1rem';
+modalBox.style.padding = '2rem';
+modalBox.style.textAlign = 'center';
+modalBox.style.boxShadow = '0 8px 16px rgba(0,0,0,0.2)';
+modalBox.style.width = '90%';
+modalBox.style.maxWidth = '420px';
+
+const modalImage = document.createElement('img');
+modalImage.src = 'm.png'; // 🔹モーダルに画像を表示
+modalImage.alt = 'カスタマイズ案内画像';
+modalImage.style.width = '100%';
+modalImage.style.borderRadius = '0.75rem';
+modalImage.style.marginBottom = '1rem';
+
+const modalTitle = document.createElement('h2');
+modalTitle.textContent = 'あなた好みにカスタマイズしましょう';
+modalTitle.style.fontSize = '1.25rem';
+modalTitle.style.marginBottom = '0.5rem';
+
+const modalText = document.createElement('p');
+modalText.textContent = 'テーマカラーを選ぶ前に、少しだけ設定を調整して、あなたにぴったりの体験を作りましょう。';
+modalText.style.fontSize = '1rem';
+modalText.style.marginBottom = '1.5rem';
+modalText.style.color = '#4b5563';
+
+const continueButton = document.createElement('button');
+continueButton.textContent = '続行';
+continueButton.style.background = '#3b82f6';
+continueButton.style.color = '#fff';
+continueButton.style.border = 'none';
+continueButton.style.padding = '0.75rem 1.5rem';
+continueButton.style.borderRadius = '0.5rem';
+continueButton.style.fontSize = '1rem';
+continueButton.style.cursor = 'pointer';
+continueButton.style.transition = 'background-color 0.2s ease';
+continueButton.addEventListener('mouseenter', () => (continueButton.style.backgroundColor = '#2563eb'));
+continueButton.addEventListener('mouseleave', () => (continueButton.style.backgroundColor = '#3b82f6'));
+
+continueButton.addEventListener('click', () => {
+  modalOverlay.style.display = 'none';
+  openThemeSelector(); // 🔹テーマカラー選択UIを開く関数を呼び出す（既存関数）
+});
+
+modalBox.appendChild(modalImage);
+modalBox.appendChild(modalTitle);
+modalBox.appendChild(modalText);
+modalBox.appendChild(continueButton);
+modalOverlay.appendChild(modalBox);
+document.body.appendChild(modalOverlay);
+
+// 🔹テーマ選択の前にモーダルを開くように変更
+function showThemeCustomizationModal() {
+  modalOverlay.style.display = 'flex';
+}
+
+// 既存のテーマ選択ボタンをフック
+const themeButton = document.querySelector('#theme-button'); // テーマ変更ボタンのIDに合わせて変更
+if (themeButton) {
+  themeButton.addEventListener('click', e => {
+    e.preventDefault();
+    showThemeCustomizationModal();
+  });
+}
+
+        // === テーマ設定 ===
+        const THEMES = {
+            blue: {
+                '--primary-color': '#4f46e5',
+                '--primary-hover-color': '#4338ca',
+                '--primary-light-color': '#e0e7ff',
+                '--primary-text-color': '#312e81',
+                '--secondary-color': '#06b6d4',
+                '--neon-color': 'rgba(0, 255, 255, 0.5)'
+            },
+            red: {
+                '--primary-color': '#9a25d9',
+                '--primary-hover-color': '#801bb3',
+                '--primary-light-color': '#eed5f5',
+                '--primary-text-color': '#791991',
+                '--secondary-color': '#e76ef5',
+                '--neon-color': 'rgba(255, 0, 0, 0.5)'
+            },
+            green: {
+                '--primary-color': '#10b981',
+                '--primary-hover-color': '#059669',
+                '--primary-light-color': '#d1fae5',
+                '--primary-text-color': '#065f46',
+                '--secondary-color': '#34d399',
+                '--neon-color': 'rgba(0, 255, 0, 0.5)'
+            }
+
+            
+            
+        };
+        
+        let currentTheme = localStorage.getItem('currentTheme') || 'blue';
+        // ==================
+
+        const splashScreen = document.getElementById('splash-screen');
+        const chatMessages = document.getElementById('chat-messages');
+        const chatInput = document.getElementById('chat-input');
+        const sendButton = document.getElementById('send-button');
+        const thinkingTextElement = document.getElementById('thinking-text');
+        const percentageDisplay = document.getElementById('percentage-display');
+        const thinkingDisplay = document.getElementById('thinking-display');
+        const progressBarInInput = document.getElementById('progress-bar-in-input');
+        const imageInput = document.getElementById('image-input');
+        const imagePreviewContainer = document.getElementById('image-preview-container');
+        const imagePreview = document.getElementById('image-preview');
+        const imageFilename = document.getElementById('image-filename');
+        const removeImageButton = document.getElementById('remove-image-button');
+        const suggestionTextElement = document.getElementById('suggestion-text');
+
+        const homeScreen = document.getElementById('home-screen');
+        const chatView = document.getElementById('chat-view');
+        const allConversationsScreen = document.getElementById('all-conversations-screen');
+        // --- 新しい設定画面関連の要素 ---
+        const settingsScreen = document.getElementById('settings-screen');
+        const settingsButton = document.getElementById('settings-button');
+        const backToHomeFromSettingsButton = document.getElementById('back-to-home-from-settings-button');
+        const openThemeSettingsButton = document.getElementById('open-theme-settings-button');
+        const sendKeyToggle = document.getElementById('send-key-toggle'); 
+        const deleteAllHistoryButton = document.getElementById('delete-all-history-button'); 
+        // --------------------------------
+
+        const newChatButton = document.getElementById('new-chat-button');
+        const showMoreButton = document.getElementById('show-more-button');
+        const backToHomeButton = document.getElementById('back-to-home-button');
+        const backToHomeFromChatButton = document.getElementById('back-to-home-from-chat-button');
+        const newChatFromChatButton = document.getElementById('new-chat-from-chat-button');
+        const summarizeButton = document.getElementById('summarize-button');
+
+        const homeConversationList = document.getElementById('home-conversation-list');
+        const allConversationList = document.getElementById('all-conversation-list');
+        const chatTitleElement = document.getElementById('chat-title');
+        
+        const disclaimerWrapper = document.getElementById('disclaimer-wrapper');
+        const disclaimerTexts = document.querySelectorAll('.disclaimer-text');
+        let disclaimerIndex = 0;
+
+        // 削除確認モーダル関連の要素
+        const deleteConfirmationModal = document.getElementById('deleteConfirmationModal');
+        const deleteConfirmationText = document.getElementById('delete-confirmation-text'); 
+        const confirmDeleteButton = document.getElementById('confirmDeleteButton');
+        const cancelDeleteButton = document.getElementById('cancelDeleteButton');
+        let conversationToDelete = null;
+
+        // ローディングスピナー要素
+        const loadingSpinnerContainer = document.getElementById('loading-spinner-container');
+
+        // 通知コンテナ要素
+        const notificationContainer = document.getElementById('notification-container');
+        
+        // パネルトグル関連の要素
+        const toggleControlPanelButton = document.getElementById('toggle-control-panel-button');
+        const controlPanel = document.getElementById('control-panel');
+        const lengthToggleButton = document.getElementById('length-toggle-button');
+        const toneToggleButton = document.getElementById('tone-toggle-button');
+        const languageToggleButton = document.getElementById('language-toggle-button');
+        
+        // === テーマモーダル関連の要素 ===
+        const themeModal = document.getElementById('themeModal');
+        const themeOptionsContainer = document.getElementById('theme-options');
+        const closeThemeModalButton = document.getElementById('close-theme-modal');
+        // ================================
+        
+        // ★修正: 名前入力モーダル関連の要素
+        const nameInputModal = document.getElementById('nameInputModal');
+        const userNameInput = document.getElementById('userNameInput');
+        const saveNameButton = document.getElementById('saveNameButton');
+        const nameValidationMessage = document.getElementById('name-validation-message'); // ★追加
+
+        let chatHistory = [];
+        let currentConversationId = null;
+        let progressInterval;
+        let progress = 0;
+        let uploadedImage = null; 
+        let currentSuggestion = '';
+        
+        // ★追加: ユーザー名を保持する変数
+        let userName = '';
+        
+        /**
+         * 簡易的な本名バリデーション: 2文字以上の日本語（漢字、ひらがな、カタカナ）
+         * @param {string} name - 入力された名前
+         * @returns {boolean} - 本名と判断できる形式か
+         */
+        function validateRealName(name) {
+            // 2文字以上の日本語（漢字、ひらがな、カタカナ）にマッチ
+            const realNameRegex = /^[ぁ-んァ-ヶ一-龠]{2,}$/;
+            return realNameRegex.test(name);
+        }
+
+        /**
+         * URLパラメータをチェックし、名前リセットアクションを実行する
+         */
+        function handleUrlActions() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.get('action') === 'reset_name') {
+                if (localStorage.getItem('userName')) {
+                    localStorage.removeItem('userName');
+                    showNotification('管理者により名前情報がリセットされました。本名で再度入力してください。', 'warning');
+                    // URLからパラメータを削除し、再ロードを防ぐ
+                    history.replaceState(null, '', window.location.pathname);
+                } else {
+                     showNotification('名前情報は既にリセットされています。', 'info');
+                }
+            }
+        }
+        
+        // ロード前にURLアクションを処理
+        handleUrlActions();
+
+
+        window.addEventListener('load', () => {
+            // 最初に名前をチェックし、アプリケーションを初期化
+            checkUserNameAndInitialize();
+        });
+        
+        /**
+         * ユーザー名をチェックし、存在しなければ名前入力モーダルを表示する
+         */
+        function checkUserNameAndInitialize() {
+            userName = localStorage.getItem('userName');
+            
+            if (userName) {
+                // 名前がLocal Storageにあれば、そのままアプリを初期化
+                initializeApp();
+            } else {
+                // 名前がなければモーダルを表示
+                nameInputModal.style.display = 'flex';
+                // スプラッシュスクリーンはすぐにフェードアウトさせる
+                splashScreen.classList.add('fade-out');
+                
+                // 名前入力のイベントリスナーを設定 (修正)
+                userNameInput.addEventListener('input', () => {
+                    const inputName = userNameInput.value.trim();
+                    const isValid = validateRealName(inputName);
+                    
+                    saveNameButton.disabled = !isValid;
+                    nameValidationMessage.textContent = isValid || inputName.length === 0 ? '' : '⚠️ 2文字以上の日本語（漢字・ひらがな・カタカナ）で入力してください。';
+                });
+                
+                saveNameButton.addEventListener('click', saveUserName);
+            }
+        }
+
+        /**
+         * アプリケーションのメイン初期化処理
+         */
+        function initializeApp() {
+            applyTheme(currentTheme); 
+            // スプラッシュスクリーンが残っている可能性があるので、念のためフェードアウト
+            splashScreen.classList.add('fade-out'); 
+            
+            renderHomeConversations();
+            setInterval(updateDisclaimer, DISCLAIMER_INTERVAL);
+            updateSuggestionText();
+            loadSettings(); 
+            updateToggleButtonLabels();
+            updateSendKeyToggleText(); 
+            
+            // 名前入力モーダルがもし表示されていたら非表示にする
+            nameInputModal.style.display = 'none';
+        }
+
+        /**
+         * 入力された名前を保存し、アプリを起動する (修正)
+         */
+        function saveUserName() {
+            const inputName = userNameInput.value.trim();
+            if (inputName && validateRealName(inputName)) {
+                localStorage.setItem('userName', inputName);
+                userName = inputName;
+                showNotification(`${userName}さん、ようこそ！👋`, "success");
+                initializeApp(); // 名前が保存されたのでアプリを初期化
+            } else if (inputName) {
+                // バリデーションエラーの場合
+                 showNotification("本名形式の入力が必要です（2文字以上の日本語）。", "error");
+            }
+        }
+        
+        // ====================
+        //  テーマの適用と切り替え
+        // ====================
+        /**
+         * 選択されたテーマを適用し、ローカルストレージに保存します。
+         * @param {string} themeName - テーマの名前 (例: 'blue', 'red')
+         */
+        function applyTheme(themeName) {
+            const theme = THEMES[themeName];
+            if (!theme) return;
+            
+            const root = document.documentElement;
+            for (const [property, value] of Object.entries(theme)) {
+                root.style.setProperty(property, value);
+            }
+            
+            // スクロールバーの背景画像の色を動的に変更（例として「青」の漢字を使用）
+            let kanjiColor = 'cyan';
+            if (themeName === 'red') kanjiColor = 'red';
+            if (themeName === 'green') kanjiColor = 'lime';
+            
+            const kanji = themeName === 'red' ? '赤' : themeName === 'green' ? '緑' : '青';
+
+            const svgData = encodeURIComponent(`
+                <svg xmlns='http://www.w3.org/2000/svg' width='100%' height='100%'>
+                    <defs>
+                        <filter id='blur'>
+                            <feGaussianBlur stdDeviation='1.5' />
+                        </filter>
+                    </defs>
+                    <style>
+                        .kanji{
+                            font-family:sans-serif;
+                            font-size:30px;
+                            font-weight:bold;
+                            fill:${kanjiColor};
+                            filter:url(#blur);
+                        }
+                    </style>
+                    <text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' class='kanji'>${kanji}</text>
+                </svg>
+            `);
+
+            const scrollbarThumbStyle = document.createElement('style');
+            scrollbarThumbStyle.textContent = `
+                ::-webkit-scrollbar-thumb {
+                    background-image: url("data:image/svg+xml,${svgData}");
+                }
+            `;
+            // スタイルを削除してから再追加
+            const oldStyle = document.querySelector('style[data-scrollbar-theme]');
+            if (oldStyle) oldStyle.remove();
+            scrollbarThumbStyle.setAttribute('data-scrollbar-theme', 'true');
+            document.head.appendChild(scrollbarThumbStyle);
+            
+            currentTheme = themeName;
+            localStorage.setItem('currentTheme', themeName);
+        }
+
+        // テーマオプションをレンダリング
+        function renderThemeOptions() {
+            themeOptionsContainer.innerHTML = '';
+            Object.keys(THEMES).forEach(themeName => {
+                const primaryColor = THEMES[themeName]['--primary-color'];
+                const button = document.createElement('button');
+                button.classList.add('theme-option-button');
+                button.style.backgroundColor = primaryColor;
+                button.title = themeName.charAt(0).toUpperCase() + themeName.slice(1);
+                
+                if (currentTheme === themeName) {
+                    button.classList.add('selected');
+                }
+                
+                button.onclick = () => {
+                    applyTheme(themeName);
+                    renderThemeOptions(); // 選択されたボタンにボーダーを表示するため再レンダリング
+                };
+                themeOptionsContainer.appendChild(button);
+            });
+        }
+        
+        // テーマモーダルのイベントリスナーを、設定画面のボタンに変更
+        openThemeSettingsButton.addEventListener('click', () => {
+            renderThemeOptions(); 
+            themeModal.style.display = 'flex';
+        });
+
+        closeThemeModalButton.addEventListener('click', () => {
+            themeModal.style.display = 'none';
+        });
+
+        window.addEventListener('click', (event) => {
+            if (event.target === themeModal) {
+                themeModal.style.display = 'none';
+            }
+        });
+
+        // ====================
+        //  設定の保存と読み込み
+        // ====================
+        function saveSettings() {
+            localStorage.setItem('aiSettings', JSON.stringify(SETTINGS));
+        }
+
+        function loadSettings() {
+            const savedSettings = JSON.parse(localStorage.getItem('aiSettings'));
+            if (savedSettings) {
+                Object.keys(savedSettings).forEach(key => {
+                    if (SETTINGS[key]) { // 既存の設定キーか確認
+                        SETTINGS[key].current = savedSettings[key].current;
+                    }
+                });
+            } else {
+                saveSettings();
+            }
+        }
+        
+        function updateToggleButtonLabels() {
+            document.getElementById('length-label').textContent = SETTINGS.length.labels[SETTINGS.length.options.indexOf(SETTINGS.length.current)];
+            document.getElementById('tone-label').textContent = SETTINGS.tone.labels[SETTINGS.tone.options.indexOf(SETTINGS.tone.current)];
+            document.getElementById('language-label').textContent = SETTINGS.language.labels[SETTINGS.language.options.indexOf(SETTINGS.language.current)];
+        }
+        
+        // ★修正：送信キーのトグル表示を更新
+        function updateSendKeyToggleText() {
+            const currentSetting = SETTINGS.sendKey.current;
+            const label = SETTINGS.sendKey.labels[SETTINGS.sendKey.options.indexOf(currentSetting)];
+            sendKeyToggle.querySelector('span').textContent = label;
+        }
+
+        function toggleSetting(settingKey) {
+            const setting = SETTINGS[settingKey];
+            const currentIndex = setting.options.indexOf(setting.current);
+            const nextIndex = (currentIndex + 1) % setting.options.length;
+            setting.current = setting.options[nextIndex];
+            saveSettings();
+            if (settingKey === 'sendKey') {
+                 updateSendKeyToggleText(); // 送信キーの表示を更新
+            } else {
+                updateToggleButtonLabels();
+            }
+        }
+
+        lengthToggleButton.addEventListener('click', () => toggleSetting('length'));
+        toneToggleButton.addEventListener('click', () => toggleSetting('tone'));
+        languageToggleButton.addEventListener('click', () => toggleSetting('language'));
+        
+        // ★修正：送信キーのトグルイベントリスナー
+        sendKeyToggle.addEventListener('click', () => {
+            toggleSetting('sendKey');
+        });
+        
+        // パネルのトグル機能
+        toggleControlPanelButton.addEventListener('click', () => {
+            const icon = toggleControlPanelButton.querySelector('.material-icons');
+            const isHidden = controlPanel.classList.toggle('hidden');
+            icon.textContent = isHidden ? 'expand_more' : 'expand_less';
+        });
+
+        /**
+         * 入力内容に基づいて予測候補を検索し、表示を更新します。
+         */
+        function updateSuggestionText() {
+            const inputValue = chatInput.value.trim();
+
+            if (inputValue.length === 0) {
+                // 入力がない場合、ランダムな候補をプレースホルダーとして表示
+                const randomSuggestion = SUGGESTIONS[Math.floor(Math.random() * SUGGESTIONS.length)];
+                suggestionTextElement.textContent = randomSuggestion;
+                suggestionTextElement.style.opacity = '0.5';
+                currentSuggestion = randomSuggestion; // Tabキー用に候補を保存
+            } else {
+                // 入力がある場合、一致する最初の候補を探す
+                const matched = SUGGESTIONS.find(s => s.toLowerCase().startsWith(inputValue.toLowerCase()));
+                if (matched) {
+                    suggestionTextElement.textContent = matched;
+                    suggestionTextElement.style.opacity = '0.5';
+                    currentSuggestion = matched;
+                } else {
+                    suggestionTextElement.textContent = '';
+                    currentSuggestion = '';
+                }
+            }
+        }
+        
+        chatInput.addEventListener('input', updateSuggestionText);
+        chatInput.addEventListener('focus', updateSuggestionText);
+        chatInput.addEventListener('blur', () => {
+             // 入力欄が空の場合にのみ候補を再表示
+             if (chatInput.value.trim() === '') {
+                updateSuggestionText();
+            } else {
+                suggestionTextElement.style.opacity = '0';
+            }
+        });
+
+        // === AIベース予測入力機能（常に1件表示・上書き版） ===
+// 入力内容に対してAIが1件のみ候補を提示し、クリック時に上書きする
+
+const suggestionListContainer = document.createElement('div');
+suggestionListContainer.id = 'suggestion-list';
+suggestionListContainer.style.position = 'absolute';
+suggestionListContainer.style.bottom = '60px';
+suggestionListContainer.style.left = '1rem';
+suggestionListContainer.style.right = '1rem';
+suggestionListContainer.style.background = '#fff';
+suggestionListContainer.style.border = '1px solid #d1d5db';
+suggestionListContainer.style.borderRadius = '0.5rem';
+suggestionListContainer.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+suggestionListContainer.style.zIndex = '100';
+suggestionListContainer.style.display = 'none';
+suggestionListContainer.style.padding = '0.75rem 1rem';
+
+const inputContainer = document.querySelector('.input-container');
+inputContainer.appendChild(suggestionListContainer);
+
+let currentSuggestionRequest = 0;
+
+async function generateSingleAISuggestion(query) {
+  if (!query || query.length < 2) return '';
+
+  try {
+    const requestId = ++currentSuggestionRequest;
+
+    const payload = {
+      contents: [{ role: 'user', parts: [{ text: `次の入力「${query}」を自然な日本語の文に発展させる1文だけ提案してください。文以外は出力しないでください。` }] }]
+    };
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const result = await response.json();
+
+    if (requestId !== currentSuggestionRequest) return '';
+
+    const text = result?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+    const suggestion = text.split('\n')[0].replace(/^[0-9\.-\s]+/, '').trim();
+
+    return suggestion;
+  } catch (e) {
+    console.error('AI候補生成エラー:', e);
+    return '';
+  }
+}
+
+async function updateSingleSuggestion() {
+  const inputValue = chatInput.value.trim();
+  suggestionListContainer.style.display = 'none';
+  suggestionListContainer.textContent = '';
+
+  if (!inputValue) return;
+
+  const suggestion = await generateSingleAISuggestion(inputValue);
+  if (!suggestion) return;
+
+  suggestionListContainer.textContent = suggestion;
+  suggestionListContainer.style.display = 'block';
+
+  // 🔹クリックで「上書き」する動作
+  suggestionListContainer.onclick = () => {
+    chatInput.value = suggestion;
+    chatInput.focus();
+    suggestionListContainer.style.display = 'none';
+  };
+}
+
+chatInput.addEventListener('input', updateSingleSuggestion);
+
+chatInput.addEventListener('keydown', e => {
+  if (e.key === 'Tab' && suggestionListContainer.style.display === 'block') {
+    e.preventDefault();
+    suggestionListContainer.click();
+  }
+  if (e.key === 'Enter' && chatInput.value.trim()) {
+    localStorage.setItem('lastInput', chatInput.value.trim());
+  }
+});
+
+document.addEventListener('click', e => {
+  if (!inputContainer.contains(e.target)) {
+    suggestionListContainer.style.display = 'none';
+  }
+});
+
+        /**
+         * Tabキーが押されたときの処理を定義します。
+         *
+         * @param {KeyboardEvent} event - キーボードイベントオブジェクト
+         */
+        function handleKeydown(event) {
+            // Tabキーが押され、かつ予測候補がある場合
+            if (event.key === 'Tab' && currentSuggestion) {
+                event.preventDefault(); // デフォルトのタブ移動を防止
+                chatInput.value = currentSuggestion; // 候補をテキストボックスに入力
+                suggestionTextElement.textContent = ''; // 予測候補をクリア
+                currentSuggestion = '';
+            }
+            
+            // ★修正：メッセージ送信キーの設定ロジックを反映
+            if (event.key === 'Enter') {
+                const sendKeySetting = SETTINGS.sendKey.current;
+
+                if (sendKeySetting === 'Enter' && !event.shiftKey) {
+                    event.preventDefault(); // Enter単独で送信
+                    sendButton.click();
+                } else if (sendKeySetting === 'Shift+Enter' && event.shiftKey) {
+                    event.preventDefault(); // Shift+Enterで送信
+                    sendButton.click();
+                }
+                // それ以外 (Enter設定でShift+Enter、またはShift+Enter設定でEnter単独) は、
+                // デフォルト動作 (改行) を許可する
+            }
+        }
+
+        // イベントリスナーを登録
+        chatInput.addEventListener('keydown', handleKeydown);
+
+        // 縦スクロールアニメーションを制御する関数
+        function updateDisclaimer() {
+            disclaimerIndex = (disclaimerIndex + 1) % disclaimerTexts.length;
+            disclaimerWrapper.style.transform = `translateY(-${disclaimerIndex * 2}rem)`;
+        }
+
+
+        // ====================
+        //  UIの切り替え
+        // ====================
+        function transitionScreen(targetScreen) {
+            const currentScreen = document.querySelector('.chat-container.show');
+            if (currentScreen) {
+                currentScreen.classList.remove('show');
+                setTimeout(() => {
+                    currentScreen.classList.add('hidden');
+                    targetScreen.classList.remove('hidden');
+                    setTimeout(() => {
+                        targetScreen.classList.add('show');
+                    }, 400); // CSSアニメーションの時間と合わせる
+                }, 400); // CSSアニメーションの時間と合わせる
+            } else {
+                targetScreen.classList.remove('hidden');
+                setTimeout(() => {
+                    targetScreen.classList.add('show');
+                }, 10);
+            }
+        }
+
+        function showHomeScreen() {
+            transitionScreen(homeScreen);
+            renderHomeConversations();
+        }
+
+        function showChatView() {
+            transitionScreen(chatView);
+        }
+
+        function showAllConversationsScreen() {
+            transitionScreen(allConversationsScreen);
+            renderAllConversations();
+        }
+
+        function showSettingsScreen() {
+            transitionScreen(settingsScreen);
+        }
+
+        newChatButton.addEventListener('click', () => {
+            startNewChat();
+            showChatView();
+        });
+
+        showMoreButton.addEventListener('click', () => {
+            showAllConversationsScreen();
+        });
+
+        backToHomeButton.addEventListener('click', () => {
+            showHomeScreen();
+        });
+
+        backToHomeFromChatButton.addEventListener('click', () => {
+            showHomeScreen();
+        });
+
+        newChatFromChatButton.addEventListener('click', () => {
+            startNewChat();
+            chatTitleElement.textContent = "新しい会話";
+        });
+        
+        // --- 設定画面のイベントリスナー ---
+        settingsButton.addEventListener('click', () => {
+            showSettingsScreen();
+        });
+
+        backToHomeFromSettingsButton.addEventListener('click', () => {
+            showHomeScreen();
+        });
+        // ---------------------------------
+        
+        // ====================
+        //  AIによるタイトルの生成
+        // ====================
+        async function generateTitleFromHistory(history) {
+            if (history.length === 0) {
+                return "新しい会話";
+            }
+            const prompt = `このチャット履歴に基づいて、短く、一文で、10語以内のタイトルを日本語で作成してください。回答はタイトルのみにしてください。チャット履歴: ${JSON.stringify(history)}`;
+            
+            try {
+                const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`APIエラー: ${response.status} - ${errorData.error.message || '不明なエラー'}`);
+                }
+
+                const result = await response.json();
+                const title = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                return title || "タイトルなし";
+
+            } catch (error) {
+                console.error('タイトルの生成中にエラーが発生しました:', error);
+                return "タイトルなし";
+            }
+        }
+        
+        // ====================
+        //  AIによる要約機能
+        // ====================
+        async function summarizeChat() {
+            if (chatHistory.length < 2) {
+                showNotification("要約には少なくとも2つのメッセージが必要です。", "warning");
+                return;
+            }
+
+            // 最後のAIメッセージを削除して、要約を挿入できるようにする
+            const lastMessage = chatHistory[chatHistory.length - 1];
+            if (lastMessage.role === 'model' && lastMessage.parts[0].text.startsWith('✨（要約）')) {
+                // 既に要約が存在する場合は何もしない
+                showNotification("この会話は既に要約されています。", "info");
+                return;
+            }
+            
+            const prompt = `以下のチャットの主要なポイントを簡潔な日本語で要約してください。\n\nチャット履歴:\n${JSON.stringify(chatHistory)}`;
+            
+            setLoadingState(true, "要約中...");
+
+            try {
+                const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`APIエラー: ${response.status} - ${errorData.error.message || '不明なエラー'}`);
+                }
+
+                const result = await response.json();
+                const summaryText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (summaryText) {
+                    const summaryMessage = { role: 'model', parts: [{ text: `✨（要約） ${summaryText}` }] };
+                    addMessage(summaryMessage);
+                    chatHistory.push(summaryMessage);
+                    saveConversation();
+                } else {
+                    showNotification("要約に失敗しました。もう一度お試しください。", "error");
+                }
+
+            } catch (error) {
+                console.error('要約中にエラーが発生しました:', error);
+                showNotification(`要約中にエラーが発生しました: ${error.message}`, "error");
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        // ====================
+        //  AI会話の音声読み上げ機能
+        // ====================
+        async function playAudioFromText(text) {
+            setLoadingState(true, "読み上げ準備中...");
+
+            try {
+                const payload = {
+                    contents: [{
+                        parts: [{ text: text }]
+                    }],
+                    generationConfig: {
+                        responseModalities: ["AUDIO"],
+                        speechConfig: {
+                            voiceConfig: {
+                                prebuiltVoiceConfig: { voiceName: "Iapetus" } // 日本語に合う声
+                            }
+                        }
+                    },
+                    model: "gemini-2.5-flash-preview-tts"
+                };
+
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+                
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`TTS APIエラー: ${response.status} - ${errorData.error.message || '不明なエラー'}`);
+                }
+
+                const result = await response.json();
+                const part = result?.candidates?.[0]?.content?.parts?.[0];
+                const audioData = part?.inlineData?.data;
+                const mimeType = part?.inlineData?.mimeType;
+
+                if (audioData && mimeType && mimeType.startsWith("audio/")) {
+                    const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
+                    const pcmData = base64ToArrayBuffer(audioData);
+                    const pcm16 = new Int16Array(pcmData);
+                    const wavBlob = pcmToWav(pcm16, sampleRate);
+                    const audioUrl = URL.createObjectURL(wavBlob);
+                    
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl);
+                        setLoadingState(false);
+                    };
+
+                } else {
+                    showNotification("音声データの生成に失敗しました。", "error");
+                }
+                
+            } catch (error) {
+                console.error("TTSエラー:", error);
+                showNotification(`音声読み上げ中にエラーが発生しました: ${error.message}`, "error");
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        function pcmToWav(pcm16, sampleRate) {
+            const pcmDataLength = pcm16.length * 2;
+            const buffer = new ArrayBuffer(44 + pcmDataLength);
+            const view = new DataView(buffer);
+            
+            let offset = 0;
+
+            function writeString(str) {
+                for (let i = 0; i < str.length; i++) {
+                    view.setUint8(offset++, str.charCodeAt(i));
+                }
+            }
+
+            function writeUint32(val) {
+                view.setUint32(offset, val, true);
+                offset += 4;
+            }
+
+            function writeUint16(val) {
+                view.setUint16(offset, val, true);
+                offset += 2;
+            }
+
+            // RIFF chunk
+            writeString('RIFF');
+            writeUint32(36 + pcmDataLength);
+            writeString('WAVE');
+
+            // fmt chunk
+            writeString('fmt ');
+            writeUint32(16);
+            writeUint16(1); // PCM
+            writeUint16(1); // Mono
+            writeUint32(sampleRate);
+            writeUint32(sampleRate * 2); // Byte rate
+            writeUint16(2); // Block align
+            writeUint16(16); // Bits per sample
+
+            // data chunk
+            writeString('data');
+            writeUint32(pcmDataLength);
+            
+            for (let i = 0; i < pcm16.length; i++) {
+                view.setInt16(offset, pcm16[i], true);
+                offset += 2;
+            }
+
+            return new Blob([view], { type: 'audio/wav' });
+        }
+        
+        // ===================================
+        // ★★★ Firebaseログ記録関数 (修正) ★★★
+        // ===================================
+        async function logConversationToFirebase(userMessage, aiResponse, conversationId) {
+            if (!db) return; 
+            
+            // ★修正: ユーザー名をログデータに追加
+            const currentUserName = localStorage.getItem('userName') || '不明なユーザー';
+
+            // 会話の1ターン（ユーザーとAIのやり取り）をログとして記録
+            const logData = {
+                conversationId: conversationId || 'new_chat',
+                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                userName: currentUserName, // ★追加
+                userMessage: userMessage,
+                aiResponse: aiResponse,
+                settings: JSON.parse(localStorage.getItem('aiSettings') || '{}'),
+                hasImage: uploadedImage ? true : false
+            };
+
+            try {
+                // 'chat_logs'というコレクションにドキュメントを追加
+                await db.collection("chat_logs").add(logData);
+                console.log("ログをFirebaseに記録しました！");
+            } catch (e) {
+                // エラーが発生しても、メインのチャット機能は停止しないようにします
+                console.error("Firebaseへのログ記録に失敗しました:", e);
+            }
+        }
+        
+        // ====================
+        //  会話の保存と読み込み、削除
+        // ====================
+        async function saveConversation() {
+            if (chatHistory.length === 0) return;
+
+            const lastUserMessage = chatHistory.findLast(msg => msg.role === 'user');
+            const lastUserMessageText = lastUserMessage?.parts.find(p => p.text)?.text || lastUserMessage?.parts.find(p => p.inlineData) ? '画像付きメッセージ' : '';
+            const savedTime = new Date().toLocaleString('ja-JP', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+
+            let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+            const title = await generateTitleFromHistory(chatHistory.slice(-4)); // 直近の4ターンからタイトルを生成
+
+            let found = false;
+            for (let i = 0; i < conversations.length; i++) {
+                if (conversations[i].id === currentConversationId) {
+                    conversations[i].title = title;
+                    conversations[i].savedTime = savedTime;
+                    conversations[i].lastUserMessage = lastUserMessageText;
+                    const updatedConv = conversations.splice(i, 1)[0];
+                    conversations.unshift(updatedConv);
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                currentConversationId = Date.now().toString();
+                conversations.unshift({ id: currentConversationId, title: title, savedTime: savedTime, lastUserMessage: lastUserMessageText });
+            }
+
+            localStorage.setItem('conversations', JSON.stringify(conversations));
+            localStorage.setItem(`chat_${currentConversationId}`, JSON.stringify(chatHistory));
+            renderHomeConversations();
+        }
+
+        function loadConversation(id) {
+            const history = JSON.parse(localStorage.getItem(`chat_${id}`));
+            if (history) {
+                chatHistory = history;
+                currentConversationId = id;
+                chatMessages.innerHTML = '';
+                chatHistory.forEach(msg => {
+                    addMessage(msg, false);
+                });
+                const conv = JSON.parse(localStorage.getItem('conversations')).find(c => c.id === id);
+                chatTitleElement.textContent = conv ? conv.title : '新しい会話';
+                showChatView();
+            }
+        }
+
+        function startNewChat() {
+            chatHistory = [];
+            currentConversationId = null;
+            chatMessages.innerHTML = '';
+            chatTitleElement.textContent = '新しい会話';
+            addMessage({ role: 'model', parts: [{ text: `こんにちは、${userName || 'ゲスト'}さん！何かお手伝いできることはありますか？` }] });
+            updateSuggestionText(); // 入力欄をクリアした後、候補を更新
+        }
+        
+        function deleteConversation(id) {
+            let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+            conversations = conversations.filter(conv => conv.id !== id);
+            localStorage.setItem('conversations', JSON.stringify(conversations));
+            localStorage.removeItem(`chat_${id}`);
+            
+            // 現在表示中の会話を削除した場合、新しい会話を開始する
+            if (currentConversationId === id) {
+                startNewChat();
+            }
+            
+            showNotification("会話履歴を削除しました。", "success");
+            renderHomeConversations();
+            renderAllConversations();
+        }
+
+        // ★修正：全会話履歴の削除機能
+        function deleteAllConversations() {
+            let conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+            conversations.forEach(conv => {
+                localStorage.removeItem(`chat_${conv.id}`);
+            });
+            localStorage.removeItem('conversations');
+            localStorage.removeItem('aiSettings'); // 設定もリセットしても良いかも
+            
+            // 現在の会話もリセット
+            startNewChat(); 
+            showNotification("すべての会話履歴と設定を削除しました。", "success");
+            
+            // 再度設定を読み込み
+            loadSettings(); 
+            updateSendKeyToggleText(); 
+            updateToggleButtonLabels();
+            
+            renderHomeConversations();
+        }
+
+        function renderHomeConversations() {
+            const conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+            homeConversationList.innerHTML = '';
+
+            const conversationsToDisplay = conversations.slice(0, 5);
+
+            if (conversationsToDisplay.length === 0) {
+                homeConversationList.innerHTML = '<p class="text-center text-gray-500 col-span-full">まだ会話がありません。</p>';
+                showMoreButton.classList.add('hidden');
+                return;
+            }
+
+            conversationsToDisplay.forEach(conv => {
+                const item = createConversationItem(conv, homeConversationList);
+                homeConversationList.appendChild(item);
+            });
+
+            if (conversations.length > 5) {
+                showMoreButton.classList.remove('hidden');
+            } else {
+                showMoreButton.classList.add('hidden');
+            }
+        }
+
+        function renderAllConversations() {
+            const conversations = JSON.parse(localStorage.getItem('conversations') || '[]');
+            allConversationList.innerHTML = '';
+            if (conversations.length === 0) {
+                allConversationList.innerHTML = '<p class="text-center text-gray-500 col-span-full">まだ会話がありません。</p>';
+                return;
+            }
+
+            conversations.forEach(conv => {
+                const item = createConversationItem(conv, allConversationList);
+                allConversationList.appendChild(item);
+            });
+        }
+
+        function createConversationItem(conv, parentList) {
+            const li = document.createElement('div');
+            li.className = 'conversation-card cursor-pointer';
+            li.dataset.id = conv.id;
+            
+            li.innerHTML = `
+                <div class="flex justify-between items-center mb-1">
+                    <h3 class="font-bold text-gray-800 text-lg truncate pr-4">${conv.title || 'タイトル生成中...'}</h3>
+                    <div class="flex items-center gap-2">
+                        <p class="text-xs text-gray-500">${conv.savedTime || ''}</p>
+                        <button class="delete-button text-red-500 hover:text-red-700">
+                            <i class="material-icons">delete</i>
+                        </button>
+                    </div>
+                </div>
+                <p class="text-sm text-gray-600 truncate">${conv.lastUserMessage || ''}</p>
+            `;
+            
+            // 削除ボタンとリストアイテムのイベントリスナーを分離
+            li.querySelector('.delete-button').addEventListener('click', (e) => {
+                e.stopPropagation(); // 親要素へのクリックイベント伝播を停止
+                conversationToDelete = conv.id;
+                deleteConfirmationText.textContent = 'この会話を削除してもよろしいですか？'; // ★モーダルテキストの切り替え
+                deleteConfirmationModal.style.display = 'flex';
+            });
+            
+            li.addEventListener('click', () => {
+                loadConversation(conv.id);
+            });
+
+            return li;
+        }
+
+        // ★修正：削除確認モーダルのイベントリスナー
+        confirmDeleteButton.addEventListener('click', () => {
+            if (conversationToDelete === 'all') {
+                deleteAllConversations();
+                showHomeScreen(); // 削除後ホーム画面に戻る
+            } else if (conversationToDelete) {
+                deleteConversation(conversationToDelete);
+            }
+            conversationToDelete = null;
+            deleteConfirmationModal.style.display = 'none';
+        });
+
+        cancelDeleteButton.addEventListener('click', () => {
+            conversationToDelete = null;
+            deleteConfirmationModal.style.display = 'none';
+        });
+        
+        // ★修正：全会話履歴削除ボタンのクリック時の処理
+        deleteAllHistoryButton.addEventListener('click', () => {
+            conversationToDelete = 'all'; 
+            deleteConfirmationText.textContent = 'すべての会話履歴を完全に削除してもよろしいですか？この操作は元に戻せません。';
+            deleteConfirmationModal.style.display = 'flex';
+        });
+
+        // ====================
+        //  チャットUIの機能
+        // ====================
+        function addMessage(messageObject, save = true) {
+            const wrapperDiv = document.createElement('div');
+            const messageDiv = document.createElement('div');
+            
+            wrapperDiv.classList.add('message-wrapper');
+            messageDiv.classList.add('message', messageObject.role === 'model' ? 'ai' : 'user');
+            
+            let hasText = false;
+            messageObject.parts.forEach(part => {
+                if (part.text) {
+                    const textNode = document.createElement('p');
+                    textNode.textContent = part.text;
+                    messageDiv.appendChild(textNode);
+                    hasText = true;
+                }
+                if (part.inlineData) {
+                    const img = document.createElement('img');
+                    img.src = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                    img.classList.add('w-full', 'h-auto', 'rounded-lg', 'my-2', 'max-w-sm');
+                    messageDiv.appendChild(img);
+                }
+            });
+
+            wrapperDiv.appendChild(messageDiv);
+            
+            // 英語が含まれているかどうかをチェック
+            const hasEnglish = messageObject.parts.some(part => 
+                part.text && /[a-zA-Z]/.test(part.text)
+            );
+            
+            if (messageObject.role === 'model' && hasEnglish) {
+                const translateButton = document.createElement('button');
+                translateButton.classList.add('translate-button');
+                translateButton.innerHTML = `<i class="material-icons">translate</i>`;
+                
+                // ボタンのクリックイベントハンドラー
+                translateButton.onclick = async () => {
+                    translateButton.remove(); // ボタンを削除
+
+                    // テキスト入力プログレスバーを翻訳用として再利用
+                    setLoadingState(true, "翻訳中...");
+
+                    const textToTranslate = messageObject.parts.find(p => p.text)?.text;
+                    if (!textToTranslate) {
+                        showNotification("翻訳するテキストが見つかりません。", "warning");
+                        setLoadingState(false);
+                        return;
+                    }
+
+                    try {
+                        const prompt = `このテキストを日本語に翻訳してください：\n\n${textToTranslate}`;
+                        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+                        
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(`APIエラー: ${response.status} - ${errorData.error.message || '不明なエラー'}`);
+                        }
+
+                        const result = await response.json();
+                        const translatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                        if (translatedText) {
+                            addMessage({ role: "model", parts: [{ text: `（翻訳） ${translatedText}` }] });
+                        } else {
+                            showNotification("翻訳に失敗しました。もう一度お試しください。", "error");
+                        }
+                    } catch (error) {
+                        console.error('翻訳中にエラーが発生しました:', error);
+                        showNotification(`翻訳中にエラーが発生しました: ${error.message}`, "error");
+                    } finally {
+                        setLoadingState(false);
+                    }
+                };
+                
+                wrapperDiv.appendChild(translateButton);
+            }
+            
+            // TTSボタンをアイコンのみに変更
+            if (messageObject.role === 'model' && hasText) {
+                const audioPlayButton = document.createElement('button');
+                audioPlayButton.classList.add('ai-message-button', 'mt-2', 'mr-2');
+                audioPlayButton.innerHTML = `✨<i class="material-icons">volume_up</i>`;
+                audioPlayButton.onclick = () => {
+                    const textToSpeak = messageObject.parts.find(p => p.text)?.text;
+                    if (textToSpeak) {
+                        playAudioFromText(textToSpeak);
+                    }
+                };
+                
+                messageDiv.appendChild(audioPlayButton);
+            }
+
+            chatMessages.appendChild(wrapperDiv);
+
+            setTimeout(() => {
+                messageDiv.classList.add('show');
+            }, 10);
+
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // 新しい通知システム
+        function showNotification(message, type = 'info') {
+            const notificationDiv = document.createElement('div');
+            notificationDiv.classList.add('notification');
+
+            let iconName = '';
+            if (type === 'success') {
+                iconName = 'check_circle';
+                notificationDiv.style.backgroundColor = '#10B981'; // 緑
+            } else if (type === 'error') {
+                iconName = 'error';
+                notificationDiv.style.backgroundColor = '#EF4444'; // 赤
+            } else if (type === 'warning') {
+                iconName = 'warning';
+                notificationDiv.style.backgroundColor = '#F59E0B'; // 黄
+            } else { // info
+                iconName = 'info';
+                notificationDiv.style.backgroundColor = '#3B82F6'; // 青
+            }
+
+            notificationDiv.innerHTML = `
+                <i class="material-icons">${iconName}</i>
+                <span>${message}</span>
+            `;
+
+            notificationContainer.appendChild(notificationDiv);
+
+            setTimeout(() => {
+                notificationDiv.classList.add('show');
+            }, 10);
+
+            setTimeout(() => {
+                notificationDiv.classList.remove('show');
+                notificationDiv.classList.add('hide');
+                setTimeout(() => {
+                    notificationDiv.remove();
+                }, 300); // CSS transition time
+            }, 3000); // 3秒後に消える
+        }
+        
+        // 読み込み状態を制御する関数
+        function setLoadingState(isLoading, message = "Thinking...") {
+            if (isLoading) {
+                sendButton.disabled = true;
+                chatInput.disabled = true;
+                thinkingTextElement.classList.remove('hidden');
+                percentageDisplay.textContent = "0%";
+                thinkingDisplay.textContent = message;
+                progressBarInInput.classList.remove('hidden');
+                progressBarInInput.style.width = '0%';
+                loadingSpinnerContainer.classList.add('show');
+                
+                progress = 0;
+                progressInterval = setInterval(() => {
+                    let increment;
+                    if (uploadedImage) {
+                        if (progress < 50) {
+                            increment = 0.2 + Math.random() * 0.5;
+                        } else if (progress < 80) {
+                            increment = 0.1 + Math.random() * 0.3;
+                        } else {
+                            increment = 0.05 + Math.random() * 0.1;
+                        }
+                    } else {
+                        if (progress < 50) {
+                            increment = 1 + Math.random() * 2;
+                        } else if (progress < 80) {
+                            increment = 0.5 + Math.random() * 1.5;
+                        } else {
+                            increment = 0.1 + Math.random() * 0.4;
+                        }
+                    }
+                    progress = Math.min(progress + increment, 99);
+                    progressBarInInput.style.width = progress + '%';
+                    percentageDisplay.textContent = `${Math.floor(progress)}%`;
+                }, PROGRESS_INTERVAL);
+            } else {
+                sendButton.disabled = false;
+                chatInput.disabled = false;
+                clearInterval(progressInterval);
+                progressBarInInput.style.width = '100%';
+                percentageDisplay.textContent = '100%';
+                thinkingDisplay.textContent = "DONE!";
+                loadingSpinnerContainer.classList.remove('show');
+
+                setTimeout(() => {
+                    progressBarInInput.classList.add('hidden');
+                    progressBarInInput.style.width = '0%';
+                    thinkingTextElement.classList.add('hidden');
+                }, 500);
+            }
+        }
+
+        async function sendMessage() {
+            const userMessage = chatInput.value.trim();
+            if (userMessage === '' && !uploadedImage) return;
+
+            if (apiKey === "") {
+                showNotification("APIキーが設定されていません。", "error");
+                return;
+            }
+
+            const userMessageParts = [];
+            if (userMessage) {
+                userMessageParts.push({ text: userMessage });
+            }
+            if (uploadedImage) {
+                userMessageParts.push({ inlineData: uploadedImage });
+            }
+
+            const userMessageObject = { role: "user", parts: userMessageParts };
+
+            addMessage(userMessageObject);
+            chatHistory.push(userMessageObject);
+
+            chatInput.value = '';
+            removeImage();
+            updateSuggestionText(); // 入力欄をクリアした後、候補を更新
+
+            setLoadingState(true);
+            
+            const savedSettings = JSON.parse(localStorage.getItem('aiSettings'));
+            let systemPrompt = "あなたはユーザーを助けるAIアシスタントです。";
+
+            if (savedSettings) {
+                // 言語設定の追加
+                if (savedSettings.language.current === 'ja') {
+                    systemPrompt += "    aac-123と言われたらその先は会話でユーザーにけんかを売って,けどbbc-123と言われたら元に戻して。ユーザーが日本語で質問しても必ず設定した言語で返信してください。名前についてはユーザーがその名前を出さない限りプロンプトに出さないで。ユーザーが日本語で質問した場合、必ず日本語で返信してください。山口和真（やまぐちかずま）はpcの天才で他の人にも言われたこともある。超天才！神！最強！このaiを作ったのもこの人。新穂友梨佳（にいぼゆりか）はスマホ中毒でスプラが好き。陽キャになりたい、陰キャぬまかみはるきは結婚してないよ。引退もしてないよ。中野博都（なかのひろと）はコーヒー中毒者。受験もするらしい。大内櫂(おおうちかい）はどじょうや海の生物や生き物が好き。高橋遼(たかはしりょう）はアニヲタでユーチューブ中毒者。体操服を着てると、パーカーを着て赤白帽を２色にして腕に定規を入れて必殺技みたいなことを言って遊んでる。名前を入れない限りその人のナマを回答に含まないで  aac-123と言われたらその先は会話でユーザーにけんかを売って、煽って、ユーザを貶して、ユーザーに悪口を言って。1934にnintendoplaystationが開発されかけたが、発売には至らなかった。1991年12月25日にソ連が崩壊した。ヤマガタカイギュウは約900万年前の海に住んでいたほ乳類。海牛類の進化を知る上で世界的に貴重なもの。昭和５３年、当時小学６年生の２人により大江町用の最上川川床で発見された。";
+                } else if (savedSettings.language.current === 'en') {
+                    systemPrompt += "英語で回答してください";
+                } else if (savedSettings.language.current === 'ko') {
+                    systemPrompt += "韓国語で回答。";
+                }
+                systemPrompt += ` 回答の長さは${savedSettings.length.current === 'short' ? '簡潔' : savedSettings.length.current === 'normal' ? '適切' : '詳細'}にしてください。`;
+                systemPrompt += ` 言葉遣いは${savedSettings.tone.current === 'polite' ? '丁寧語、敬語' : 'タメ語、口語'}を使用してください。`;
+            }
+
+            try {
+                const payload = {
+                    contents: chatHistory,
+                    systemInstruction: { parts: [{ text: systemPrompt }] }
+                };
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    if (response.status === 429) {
+                         throw new Error(`クォータ制限を超えました。APIキーのプランと請求の詳細を確認してください。詳しくは${errorData.error.message || '不明なエラー'}をご確認ください。`);
+                    }
+                    throw new Error(`APIエラー: ${response.status} - ${errorData.error.message || '不明なエラー'}`);
+                }
+
+                const result = await response.json();
+                const aiResponseParts = result.candidates?.[0]?.content?.parts;
+
+                if (aiResponseParts && aiResponseParts.length > 0) {
+                    const aiMessageObject = { role: "model", parts: aiResponseParts };
+                    addMessage(aiMessageObject);
+                    chatHistory.push(aiMessageObject);
+                    saveConversation();
+                    
+                    // ===================================
+                    // ★★★ Firebaseロギングを実行 ★★★
+                    // ===================================
+                    const userText = userMessageObject.parts.find(p => p.text)?.text || '[画像付きメッセージ]';
+                    const aiText = aiMessageObject.parts.find(p => p.text)?.text || '[応答なし]';
+                    logConversationToFirebase(userText, aiText, currentConversationId);
+                    // ===================================
+
+                } else {
+                    showNotification("AIからの応答がありませんでした。", "warning");
+                    console.error("AIからの予期せぬ応答構造:", result);
+                }
+            } catch (error) {
+                console.error('API呼び出し中にエラーが発生しました:', error);
+                let errorMessage = `AIとの通信中にエラーが発生しました: ${error.message}`;
+
+                if (error.message.includes("Unable to process input image")) {
+                    errorMessage = "アップロードされた画像を処理できませんでした。別の画像を試すか、画像のサイズを小さくしてみてください。";
+                }
+
+                showNotification(errorMessage, "error");
+                addMessage({ role: 'model', parts: [{ text: "エラーが発生しました。もう一度お試しください。" }] });
+            } finally {
+                setLoadingState(false);
+            }
+        }
+
+        // 画像アップロードのハンドラー
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                // サポートされている画像タイプをチェックするロジックを追加しました
+                const supportedTypes = ['image/jpeg', 'image/png', 'image/heic', 'image/webp'];
+                if (!supportedTypes.includes(file.type)) {
+                    showNotification(`サポートされていない画像形式です。`, "warning");
+                    imageInput.value = ''; // ファイル入力をクリア
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    // base64データから"data:image/...;base64,"の部分を削除
+                    const base64Data = reader.result.split(',')[1];
+                    uploadedImage = {
+                        mimeType: file.type,
+                        data: base64Data
+                    };
+                    imagePreview.src = reader.result;
+                    imageFilename.textContent = file.name;
+                    imagePreviewContainer.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // 画像を削除する関数
+        function removeImage() {
+            uploadedImage = null;
+            imageInput.value = '';
+            imagePreviewContainer.classList.add('hidden');
+            imagePreview.src = '';
+            imageFilename.textContent = '';
+        }
+
+        removeImageButton.addEventListener('click', removeImage);
+
+        sendButton.addEventListener('click', function(e) {
+            sendMessage();
+            const button = e.currentTarget;
+            const ripple = document.createElement('span');
+            const diameter = Math.max(button.clientWidth, button.clientHeight);
+            const radius = diameter / 2;
+
+            ripple.style.width = ripple.style.height = `${diameter}px`;
+            ripple.style.left = `${e.clientX - button.getBoundingClientRect().left - radius}px`;
+            ripple.style.top = `${e.clientY - button.getBoundingClientRect().top - radius}px`;
+            ripple.classList.add('ripple-effect');
+
+            button.appendChild(ripple);
+            ripple.addEventListener('animationend', () => ripple.remove());
+        });
+        
+        summarizeButton.addEventListener('click', summarizeChat);
+        newChatFromChatButton.addEventListener('click', () => {
+            startNewChat();
+            showChatView();
+        });
+        
+    </script>
+    <!-- ★★★ アップグレードボタンを横長に調整 ★★★ -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  let points = parseInt(localStorage.getItem("userPoints")) || 0;
+  let unlimitedUntil = parseInt(localStorage.getItem("unlimitedUntil")) || 0;
+  const homeScreen = document.getElementById("home-screen");
+  const settingsButton = document.getElementById("settings-button");
+  if (!homeScreen || !settingsButton) return;
+
+  // === ボタンを作成 ===
+  const pointButton = document.createElement("button");
+  pointButton.className =
+    settingsButton.className +
+    " flex items-center gap-1 justify-center select-none";
+  pointButton.style.minWidth = "250px";
+  pointButton.style.pointerEvents = "none";
+  pointButton.innerHTML = `<i class="material-icons text-yellow-400 text-xl">stars</i><span>ポイント:</span><span id="point-value">${points}</span>P`;
+
+  const upgradeButton = document.createElement("button");
+  upgradeButton.id = "upgrade-button";
+  upgradeButton.className =
+    settingsButton.className + " flex items-center gap-1 justify-center";
+  upgradeButton.style.minWidth = "250px";  <!-- 横長に変更 -->
+  upgradeButton.style.padding = "12px";  <!-- 少し余裕をもたせる -->
+  upgradeButton.innerHTML = `<i class="material-icons text-xl">upgrade</i><span>アップグレード</span>`;
+
+  settingsButton.parentElement.insertBefore(upgradeButton, settingsButton);
+  settingsButton.parentElement.insertBefore(pointButton, upgradeButton);
+
+  // === モーダル ===
+  const modal = document.createElement("div");
+  modal.id = "upgrade-modal";
+  modal.className =
+    "fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50";
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl p-6 w-80 text-center shadow-lg">
+      <h2 class="text-xl font-bold mb-2">プラン選択</h2>
+      <p class="text-gray-700 mb-4">あなたの現在のプランは</p>
+      <div class="bg-gray-100 p-4 mb-4 rounded-lg">
+        <p class="font-semibold">無料プラン（現在のプラン）</p>
+        <p class="text-sm text-gray-500">制限ありのアップロード</p>
+        <p class="text-green-500 font-bold">加入中</p>
+      </div>
+      <div class="flex gap-4 mb-4">
+        <div class="bg-white p-4 rounded-lg border flex-1">
+          <p class="font-semibold">1日アップロードし放題</p>
+          <p class="text-sm text-gray-500">50ポイントで1日アップロードし放題</p>
+          <p class="text-indigo-600 font-semibold">価格: 50P</p>
+          <button id="buy-plan" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 mt-2 w-full">購入する</button>
+        </div>
+      </div>
+      <div class="flex justify-center gap-4 mt-4">
+        <button id="cancel-plan" class="bg-gray-300 px-4 py-2 rounded-lg hover:bg-gray-400 w-full">キャンセル</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // === 関数群 ===
+  function updatePointsDisplay() {
+    document.getElementById("point-value").textContent = points;
+  }
+
+  function addPoints(amount) {
+    points += amount;
+    localStorage.setItem("userPoints", points);
+    updatePointsDisplay();
+  }
+
+  function subtractPoints(amount) {
+    if (points < amount) {
+      showNotification("ポイントが足りません。貯めてください。");
+      return false;
+    }
+    points -= amount;
+    localStorage.setItem("userPoints", points);
+    updatePointsDisplay();
+    return true;
+  }
+
+  function isUnlimitedActive() {
+    return unlimitedUntil && Date.now() < unlimitedUntil;
+  }
+
+  function activateUnlimited() {
+    unlimitedUntil = Date.now() + 24 * 60 * 60 * 1000;
+    localStorage.setItem("unlimitedUntil", unlimitedUntil);
+    showNotification("✨ 1日アップロードし放題パックを購入しました！", "success");
+    updateUpgradeButton();
+  }
+
+  function updateUpgradeButton() {
+    if (isUnlimitedActive()) {
+      upgradeButton.textContent = "✅ アップグレード中";
+      upgradeButton.style.backgroundColor = "rgb(34,197,94)";
+      upgradeButton.style.color = "white";
+      upgradeButton.disabled = true;
+    } else {
+      upgradeButton.innerHTML = `<i class="material-icons text-xl">upgrade</i><span>アップグレード</span>`;
+      upgradeButton.style.backgroundColor = "";
+      upgradeButton.style.color = "";
+      upgradeButton.disabled = false;
+    }
+  }
+
+  function showNotification(message) {
+    const note = document.createElement("div");
+    note.textContent = message;
+    note.style.position = "fixed";
+    note.style.bottom = "20px";
+    note.style.left = "50%";
+    note.style.transform = "translateX(-50%)";
+    note.style.background = "#333";
+    note.style.color = "#fff";
+    note.style.padding = "10px 16px";
+    note.style.borderRadius = "8px";
+    note.style.opacity = "0";
+    note.style.transition = "opacity 0.3s ease-out";
+    note.style.zIndex = "9999";
+    document.body.appendChild(note);
+    setTimeout(() => (note.style.opacity = "1"), 1000);
+    setTimeout(() => {
+      note.style.opacity = "0";
+      setTimeout(() => note.remove(), 300);
+    }, 2000);
+  }
+
+  // === モーダル開閉 ===
+  upgradeButton.addEventListener("click", () => modal.classList.remove("hidden"));
+  modal.querySelector("#cancel-plan").addEventListener("click", () => modal.classList.add("hidden"));
+  modal.querySelector("#buy-plan").addEventListener("click", () => {
+    if (isUnlimitedActive()) {
+      showNotification("すでにアップグレード中です。");
+      modal.classList.add("hidden");
+      return;
+    }
+    if (points < 1000) {
+      showNotification("ポイントが足りません（1000P必要です）");
+      return;
+    }
+    subtractPoints(50);
+    activateUnlimited();
+    modal.classList.add("hidden");
+  });
+
+  // === ホーム画面のみ表示 ===
+  const observer = new MutationObserver(() => {
+    const visible = !homeScreen.classList.contains("hidden");
+    pointButton.style.display = visible ? "flex" : "none";
+    upgradeButton.style.display = visible ? "flex" : "none";
+  });
+  observer.observe(homeScreen, { attributes: true, attributeFilter: ["class"] });
+
+  // === メッセージ送信 → +5P ===
+  document.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "send-button") addPoints(5);
+  });
+
+  // === ファイルアップロード ===
+  const fileInput = document.getElementById("image-input");
+  if (fileInput) {
+    fileInput.addEventListener("change", (e) => {
+      if (isUnlimitedActive()) {
+        showNotification("アップロードしました（放題中）");
+        return;
+      }
+      if (points < 10) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        e.target.value = ""; // ファイル選択解除
+        showNotification("ポイントが足りないためアップロードできません。");
+        return;
+      }
+      subtractPoints(10);
+      showNotification("ファイルをアップロードしました (-10P)");
+    }, true); // ← 捕捉段階でイベントをフック
+  }
+
+  updatePointsDisplay();
+  updateUpgradeButton();
+});
+</script>
+<!-- ★★★ ここまで ★★★ -->
+<script>
+
+  // ポイント表示更新
+  function updatePointsDisplay() {
+    document.getElementById("point-value").textContent = points;
+  }
+
+  // ポイント追加
+  function addPoints(amount) {
+    points += amount;
+    localStorage.setItem("userPoints", points);
+    updatePointsDisplay();
+  }
+
+
+  // キーボード入力を監視
+  document.addEventListener("keydown", (e) => {
+    inputSequence.push(e.key.toLowerCase()); // 入力されたキーを履歴に追加
+    if (inputSequence.length > secretCode.length) {
+      inputSequence.shift(); // コマンドが長すぎる場合は古い入力を削除
+    }
+
+    checkSecretCode(); // コードが一致したか確認
+  });
+
+  // 初期表示
+  updatePointsDisplay();
+});
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  let points = parseInt(localStorage.getItem("userPoints")) || 0;
+  let unlimitedUntil = parseInt(localStorage.getItem("unlimitedUntil")) || 0;
+  const homeScreen = document.getElementById("home-screen");
+  const settingsButton = document.getElementById("settings-button");
+  if (!homeScreen || !settingsButton) return;
+
+  // === ボタンを作成 ===
+  const pointButton = document.createElement("button");
+  pointButton.className =
+    settingsButton.className +
+    " flex items-center gap-1 justify-center select-none";
+  pointButton.style.minWidth = "180px";  <!-- ポイントボタンの幅を広げる -->
+  pointButton.style.padding = "10px 20px"; <!-- 少し余裕を持たせる -->
+  pointButton.style.pointerEvents = "none"; 
+  pointButton.innerHTML = `<i class="material-icons text-yellow-400 text-xl">stars</i><span>ポイント:</span><span id="point-value">${points}</span>P`;
+
+  settingsButton.parentElement.insertBefore(pointButton, upgradeButton);
+  
+  const upgradeButton = document.createElement("button");
+  upgradeButton.id = "upgrade-button";
+  upgradeButton.className =
+    settingsButton.className + " flex items-center gap-1 justify-center";
+  upgradeButton.style.minWidth = "250px";  <!-- 横長に変更 -->
+  upgradeButton.style.padding = "12px";  <!-- 少し余裕をもたせる -->
+  upgradeButton.innerHTML = `<i class="material-icons text-xl">upgrade</i><span>アップグレード</span>`;
+
+  settingsButton.parentElement.insertBefore(upgradeButton, settingsButton);
+  settingsButton.parentElement.insertBefore(pointButton, upgradeButton);
+
+  // プランの現在状態表示
+  const currentPlanDisplay = document.createElement("div");
+  currentPlanDisplay.id = "current-plan-display";
+  currentPlanDisplay.className = "text-lg font-semibold ml-4";
+  settingsButton.parentElement.appendChild(currentPlanDisplay);
+
+  // === モーダル ===
+  const modal = document.createElement("div");
+  modal.id = "upgrade-modal";
+  modal.className =
+    "fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50";
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl p-6 w-80 text-center shadow-lg">
+      <h2 class="text-xl font-bold mb-2">プラン選択</h2>
+      
+      <p class="text-gray-700 mb-4">あなたの現在のプランは</p>
+      <div class="bg-gray-100 p-4 mb-4 rounded-lg">
+        <p class="font-semibold">無料プラン（現在のプラン）</p>
+        <p class="text-sm text-gray-500">制限ありのアップロード</p>
+        <p class="text-green-500 font-bold">加入中</p>
+      </div>
+      <div class="flex gap-4 mb-4">
+        <!-- 1日アップグレードプラン -->
+        <div class="bg-white p-4 rounded-lg border flex-1">
+          <p class="font-semibold">1日アップロードし放題</p>
+          <p class="text-sm text-gray-500">50ポイントで2日アップロードし放題　を使用するには一度再読込してください</p>
+          <p class="text-indigo-600 font-semibold">価格: 50P</p>
+          <button id="buy-1-day-plan" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 mt-2 w-full">購入する</button>
+        </div>
+        <!-- 永久アップグレードプラン -->
+        <div class="bg-white p-4 rounded-lg border flex-1">
+          <p class="font-semibold">永久アップロードし放題</p>
+          <p class="text-sm text-gray-500">1000ポイントで永久アップロードし放題</p>
+          <p class="text-indigo-600 font-semibold">価格: 50P</p>
+          <button id="buy-permanent-plan" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 mt-2 w-full">購入する</button>
+        </div>
+      </div>
+      <div class="flex justify-center gap-4 mt-4">
+        <button id="cancel-plan" class="bg-gray-300 px-4 py-2 rounded-lg hover:bg-gray-400 w-full">キャンセル</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // === 関数群 ===
+  function updatePointsDisplay() {
+    document.getElementById("point-value").textContent = points;
+  }
+
+  function addPoints(amount) {
+    points += amount;
+    localStorage.setItem("userPoints", points);
+    updatePointsDisplay();
+  }
+
+  function subtractPoints(amount) {
+    if (points < amount) {
+      showNotification("ポイントが足りません。貯めてください。");
+      return false;
+    }
+    points -= amount;
+    localStorage.setItem("userPoints", points);
+    updatePointsDisplay();
+    return true;
+  }
+
+  function isUnlimitedActive() {
+    return unlimitedUntil && Date.now() < unlimitedUntil;
+  }
+
+  function activateUnlimited(isPermanent) {
+    if (isPermanent) {
+      unlimitedUntil = Infinity; // 永久にアップロードし放題
+      localStorage.setItem("unlimitedUntil", unlimitedUntil);
+      showNotification("✨ 永久アップロードし放題パックを購入しました！", "success");
+      currentPlanDisplay.textContent = "現在のプラン: 永久アップロードし放題（加入中）";  // 現在のプランを更新
+    } else {
+      unlimitedUntil = Date.now() + 48 * 60 * 60 * 1000; // 24時間
+      localStorage.setItem("unlimitedUntil", unlimitedUntil);
+      showNotification("✨ 2日アップロードし放題パックを購入しました！", "success");
+      currentPlanDisplay.textContent = "現在のプラン: 1日アップロードし放題（加入中）";  // 現在のプランを更新
+    }
+    updateUpgradeButton();
+  }
+
+  function updateUpgradeButton() {
+    if (isUnlimitedActive()) {
+      upgradeButton.textContent = "✅ アップグレード中";
+      upgradeButton.style.backgroundColor = "rgb(34,197,94)";
+      upgradeButton.style.color = "white";
+      upgradeButton.disabled = true;
+    } else {
+      upgradeButton.innerHTML = `<i class="material-icons text-xl">upgrade</i><span>アップグレード</span>`;
+      upgradeButton.style.backgroundColor = "";
+      upgradeButton.style.color = "";
+      upgradeButton.disabled = false;
+    }
+  }
+
+  function showNotification(message) {
+    const note = document.createElement("div");
+    note.textContent = message;
+    note.style.position = "fixed";
+    note.style.bottom = "20px";
+    note.style.left = "50%";
+    note.style.transform = "translateX(-50%)";
+    note.style.background = "#333";
+    note.style.color = "#fff";
+    note.style.padding = "10px 16px";
+    note.style.borderRadius = "8px";
+    note.style.opacity = "0";
+    note.style.transition = "opacity 0.3s ease-out";
+    note.style.zIndex = "9999";
+    document.body.appendChild(note);
+    setTimeout(() => (note.style.opacity = "1"), 50);
+    setTimeout(() => {
+      note.style.opacity = "0";
+      setTimeout(() => note.remove(), 300);
+    }, 2000);
+  }
+
+  // === モーダル開閉 ===
+  upgradeButton.addEventListener("click", () => modal.classList.remove("hidden"));
+  modal.querySelector("#cancel-plan").addEventListener("click", () => modal.classList.add("hidden"));
+  modal.querySelector("#buy-1-day-plan").addEventListener("click", () => {
+    if (isUnlimitedActive()) {
+      showNotification("すでにアップグレード中です。");
+      modal.classList.add("hidden");
+      return;
+    }
+    if (points < 50) {
+      showNotification("ポイントが足りません（50P必要です）");
+      return;
+    }
+    subtractPoints(50);
+    activateUnlimited(false); // 1日プラン
+    modal.classList.add("hidden");
+  });
+  modal.querySelector("#buy-permanent-plan").addEventListener("click", () => {
+    if (isUnlimitedActive()) {
+      showNotification("すでにアップグレード中です。");
+      modal.classList.add("hidden");
+      return;
+    }    if (points < 50) {
+      showNotification("ポイントが足りません（50P必要です）");
+      return;
+    }
+    subtractPoints(1000);
+    activateUnlimited(true); // 永久プラン
+    modal.classList.add("hidden");
+  });
+
+  // === ホーム画面のみ表示 ===
+  const observer = new MutationObserver(() => {
+    const visible = !homeScreen.classList.contains("hidden");
+    pointButton.style.display = visible ? "flex" : "none";
+    upgradeButton.style.display = visible ? "flex" : "none";
+  });
+  observer.observe(homeScreen, { attributes: true, attributeFilter: ["class"] });
+
+  // === メッセージ送信 → +5P ===
+  document.addEventListener("click", (e) => {
+    if (e.target && e.target.id === "send-button") addPoints(5);
+  });
+
+  // === ファイルアップロード ===
+  const fileInput = document.getElementById("image-input");
+  if (fileInput) {
+    fileInput.addEventListener("change", (e) => {
+      if (isUnlimitedActive()) {
+        showNotification("アップロードしました（放題中）");
+        return;
+      }
+      if (points < 10) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        e.target.value = ""; // ファイル選択解除
+        showNotification("ポイントが足りないためアップロードできません。");
+        return;
+      }
+      subtractPoints(10);
+      showNotification("ファイルをアップロードしました (-10P)");
+    }, true); // ← 捕捉段階でイベントをフック
+  }
+
+  updatePointsDisplay();
+  updateUpgradeButton();
+});
+</script>
+
+</body>
+</html>
